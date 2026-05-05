@@ -502,6 +502,14 @@ dd {
   background: #dbeafe;
 }
 
+.status.checked_in {
+  background: #dbeafe;
+}
+
+.status.checked_out {
+  background: #e7e5e4;
+}
+
 .status.pending {
   background: #fff1c6;
 }

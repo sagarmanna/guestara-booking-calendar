@@ -8,15 +8,17 @@ I also added a stats strip and CSV export for the selected date range. These hel
 
 The app persists the last viewed month and non-search filters in `localStorage`, because those are likely preferences a returning operator would expect to keep.
 
+The data loader normalizes both the original fixture shape and the updated assignment shape, including `totalAmount`, `checked_in`, and `checked_out`.
+
 ## Date logic
 
 The heatmap uses the hotel convention that `checkIn` is inclusive and `checkOut` is exclusive. A booking from `2026-02-10` to `2026-02-13` counts on Feb 10, 11, and 12 only.
 
-The grid is Monday-first. That is common for operations teams scanning work weeks, and the UI states this decision. Previous and next month cells remain visible and selectable so dragging across month boundaries works.
+The grid is Monday-first. That is common for operations teams scanning work weeks. Previous and next month cells remain visible and selectable so dragging across month boundaries works.
 
 ## Trade-offs
 
-The mock data is deterministic and generated into `public/bookings.json`. In a production app I would keep the fixture smaller for review and source it from a real test-data generator.
+The mock data is deterministic and stored in `public/bookings.json`. In a production app I would source it from the provided API or a shared fixture generator.
 
 The app is intentionally desktop-first because the brief says mobile is not required. Basic responsive behavior exists, but desktop density and scanability were prioritized.
 

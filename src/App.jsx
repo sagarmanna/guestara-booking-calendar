@@ -3,13 +3,13 @@ import './App.css'
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const ROOM_COUNT = 10
-const DATA_START_MONTH = '2026-02'
-const DATA_END_MONTH = '2026-05'
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const statusLabels = {
   all: 'All active',
   confirmed: 'Confirmed',
   'checked-in': 'Checked in',
+  checked_in: 'Checked in',
+  checked_out: 'Checked out',
   pending: 'Pending',
   cancelled: 'Cancelled',
 }
@@ -46,6 +46,10 @@ function formatDate(date) {
   return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+function labelStatus(status) {
+  return statusLabels[status] ?? status.replaceAll(/[-_]/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
 function normalizeBooking(booking) {
   return {
     ...booking,
@@ -53,6 +57,8 @@ function normalizeBooking(booking) {
     roomNumber: String(booking.roomNumber ?? booking.room ?? ''),
     roomType: booking.roomType ?? booking.type ?? 'Room',
     source: booking.source ?? 'Direct',
+    amount: Number(booking.amount ?? booking.totalAmount ?? 0),
+    currency: booking.currency ?? 'INR',
     status: booking.status ?? 'confirmed',
   }
 }
@@ -111,9 +117,7 @@ function App() {
   const [loadState, setLoadState] = useState({ status: 'loading', error: '' })
   const [viewMonth, setViewMonth] = useState(() => {
     const savedMonth = localStorage.getItem('guestara:viewMonth')
-    const usableMonth = savedMonth && savedMonth >= DATA_START_MONTH && savedMonth <= DATA_END_MONTH
-      ? savedMonth
-      : dateKey(new Date(today.getFullYear(), today.getMonth(), 1)).slice(0, 7)
+    const usableMonth = savedMonth ?? dateKey(new Date(today.getFullYear(), today.getMonth(), 1)).slice(0, 7)
     return parseDate(`${usableMonth}-01`)
   })
   const [filters, setFilters] = useState(() => ({
@@ -141,8 +145,12 @@ function App() {
         if (!Array.isArray(nextBookings)) {
           throw new Error('bookings.json must contain an array or a { bookings } array.')
         }
-        setBookings(nextBookings.map(normalizeBooking))
+        const normalizedBookings = nextBookings.map(normalizeBooking)
+        setBookings(normalizedBookings)
         setRooms(Array.isArray(payload.rooms) ? payload.rooms : [])
+        if (!localStorage.getItem('guestara:viewMonth') && normalizedBookings.length) {
+          setViewMonth(parseDate(`${normalizedBookings[0].checkIn.slice(0, 7)}-01`))
+        }
         setLoadState({ status: 'success', error: '' })
       } catch (error) {
         setLoadState({ status: 'error', error: error.message })
@@ -164,13 +172,24 @@ function App() {
 
   const roomTypes = useMemo(() => [...new Set(bookings.map((booking) => booking.roomType))].sort(), [bookings])
   const sources = useMemo(() => [...new Set(bookings.map((booking) => booking.source))].sort(), [bookings])
+  const statusOptions = useMemo(() => ['all', ...new Set(bookings.map((booking) => booking.status))], [bookings])
+  const dataRange = useMemo(() => {
+    if (!bookings.length) return null
+    const sortedStarts = bookings.map((booking) => booking.checkIn).sort()
+    const sortedEnds = bookings.map((booking) => booking.checkOut).sort()
+    return {
+      startMonth: sortedStarts[0].slice(0, 7),
+      endMonth: sortedEnds.at(-1).slice(0, 7),
+    }
+  }, [bookings])
 
   const filteredBookings = useMemo(() => {
     const search = filters.search.trim().toLowerCase()
+    const activeStatus = filters.status === 'checked-in' ? 'checked_in' : filters.status
     return bookings.filter((booking) => {
-      const statusMatch = filters.status === 'all'
+      const statusMatch = activeStatus === 'all'
         ? booking.status !== 'cancelled'
-        : booking.status === filters.status
+        : booking.status === activeStatus
       const roomTypeMatch = filters.roomType === 'all' || booking.roomType === filters.roomType
       const sourceMatch = filters.source === 'all' || booking.source === filters.source
       const searchMatch = !search || booking.guestName.toLowerCase().includes(search)
@@ -206,7 +225,7 @@ function App() {
     const occupiedNights = monthKeys.reduce((total, key) => total + occupancyForDate(heatmapBookings, key), 0)
     const revenue = heatmapBookings
       .filter((booking) => bookingOverlapsRange(booking, { startKey: monthKeys[0], endKey: monthKeys.at(-1) }))
-      .reduce((total, booking) => total + Number(booking.amount ?? 0), 0)
+      .reduce((total, booking) => total + booking.amount, 0)
     const longestStay = heatmapBookings.reduce((max, booking) => Math.max(max, nightsBetween(booking.checkIn, booking.checkOut)), 0)
     const roomTypeCounts = heatmapBookings.reduce((counts, booking) => {
       counts[booking.roomType] = (counts[booking.roomType] ?? 0) + 1
@@ -255,9 +274,9 @@ function App() {
         `="${booking.checkIn}"`,
         `="${booking.checkOut}"`,
         nightsBetween(booking.checkIn, booking.checkOut),
-        statusLabels[booking.status],
+        labelStatus(booking.status),
         booking.source,
-        Number(booking.amount ?? 0),
+        booking.amount,
       ]),
     ]
     const csv = [
@@ -281,9 +300,9 @@ function App() {
       booking.checkIn,
       booking.checkOut,
       nightsBetween(booking.checkIn, booking.checkOut),
-      statusLabels[booking.status],
+      labelStatus(booking.status),
       booking.source,
-      currency.format(Number(booking.amount ?? 0)),
+      currency.format(booking.amount),
     ])
     const headers = ['Booking ID', 'Guest Name', 'Room Number', 'Room Type', 'Check-in Date', 'Check-out Date', 'Nights', 'Status', 'Source', 'Amount']
     const html = `<!doctype html>
@@ -342,7 +361,6 @@ function App() {
         <div>
           <span className="eyebrow">Guestara Front Desk</span>
           <h1>Booking Calendar Heatmap</h1>
-          <p>Monday-first grid chosen for operational weekday scanning; previous and next month dates stay visible for clean drag selection.</p>
         </div>
         <div className="month-controls">
           <button type="button" onClick={() => setViewMonth((month) => addMonths(month, -1))}>Previous</button>
@@ -355,8 +373,8 @@ function App() {
         <label>
           Status
           <select value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}>
-            {Object.entries(statusLabels).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
+            {statusOptions.map((value) => (
+              <option key={value} value={value}>{labelStatus(value)}</option>
             ))}
           </select>
         </label>
@@ -409,15 +427,15 @@ function App() {
             </div>
           </div>
 
-          {!monthHasBookings && (
+          {!monthHasBookings && dataRange && (
             <div className="month-empty-banner">
               <div>
                 <strong>No occupancy in this month</strong>
-                <span>The fixture has active bookings from February 2026 through May 2026. This view is still selectable, but every night is open.</span>
+                <span>The loaded booking data runs from {dataRange.startMonth} through {dataRange.endMonth}. This view is still selectable, but every night is open.</span>
               </div>
               <div className="range-jumps">
-                <button type="button" onClick={() => setViewMonth(parseDate(`${DATA_START_MONTH}-01`))}>First data month</button>
-                <button type="button" onClick={() => setViewMonth(parseDate(`${DATA_END_MONTH}-01`))}>Latest data month</button>
+                <button type="button" onClick={() => setViewMonth(parseDate(`${dataRange.startMonth}-01`))}>First data month</button>
+                <button type="button" onClick={() => setViewMonth(parseDate(`${dataRange.endMonth}-01`))}>Latest data month</button>
               </div>
             </div>
           )}
@@ -481,7 +499,7 @@ function App() {
                   <div><dt>Check-in</dt><dd>{booking.checkIn}</dd></div>
                   <div><dt>Check-out</dt><dd>{booking.checkOut}</dd></div>
                   <div><dt>Nights</dt><dd>{nightsBetween(booking.checkIn, booking.checkOut)}</dd></div>
-                  <div><dt>Status</dt><dd className={`status ${booking.status}`}>{statusLabels[booking.status]}</dd></div>
+                  <div><dt>Status</dt><dd className={`status ${booking.status}`}>{labelStatus(booking.status)}</dd></div>
                 </dl>
               </article>
             )) : (
